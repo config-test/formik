@@ -1,0 +1,40 @@
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/node:18.20
+    environment:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - yarn-v1-{{ checksum "yarn.lock" }}
+            - yarn-v1-
+
+      - run:
+          name: Versions
+          command: |
+            node --version
+            yarn --version
+
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+
+      - save_cache:
+          key: yarn-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+
+      - run:
+          name: Test packages
+          command: yarn test
+
+workflows:
+  ci:
+    jobs:
+      - test
