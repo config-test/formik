@@ -1,0 +1,98 @@
+version: 2.1
+
+# .nvmrc and existing CI use Node 18; yarn.lock uses Yarn Classic.
+# Website/examples are excluded because CI/root scripts do not test them.
+commands:
+  install-workspaces:
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - yarn-v1-node18-{{ arch }}-{{ checksum "yarn.lock" }}
+      - run:
+          name: Install workspace dependencies
+          command: yarn install --frozen-lockfile --cache-folder ~/.cache/yarn
+      - save_cache:
+          key: yarn-v1-node18-{{ arch }}-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+
+jobs:
+  formik:
+    docker:
+      - image: cimg/node:18.20
+    environment:
+      CI: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - install-workspaces
+      - run:
+          name: Build Formik
+          command: yarn build --filter=formik
+      - run:
+          name: Test Formik
+          command: yarn workspace formik test --runInBand
+      - run:
+          name: Lint Formik
+          command: yarn workspace formik lint
+
+  formik-native:
+    docker:
+      - image: cimg/node:18.20
+    environment:
+      CI: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - install-workspaces
+      - run:
+          name: Build Formik Native and its Formik dependency
+          command: yarn build --filter=formik-native...
+      - run:
+          name: Test Formik Native
+          command: yarn workspace formik-native test --runInBand
+      - run:
+          name: Lint Formik Native
+          command: yarn workspace formik-native lint
+
+  app:
+    docker:
+      # Includes browser system libraries; no apt-get needed.
+      - image: cimg/node:18.20-browsers
+    environment:
+      CI: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - app-yarn-v1-node18-{{ arch }}-{{ checksum "yarn.lock" }}-{{ checksum "app/package.json" }}
+      - run:
+          name: Install workspaces, app dependencies, and Chromium
+          # app is outside the workspaces and has no tracked lockfile.
+          command: |
+            yarn install --frozen-lockfile --cache-folder ~/.cache/yarn
+            yarn --cwd app install --cache-folder ~/.cache/yarn
+            yarn playwright install chromium
+      - save_cache:
+          key: app-yarn-v1-node18-{{ arch }}-{{ checksum "yarn.lock" }}-{{ checksum "app/package.json" }}
+          paths:
+            - ~/.cache/yarn
+      - run:
+          name: Build Formik and the app
+          command: |
+            yarn build:benchmark
+            yarn --cwd packages/formik link
+            yarn --cwd app link formik
+            yarn --cwd app build
+      - run:
+          name: Test app interactions in Chromium
+          # Playwright starts the app using the existing start:app script.
+          command: yarn e2e --project=chromium
+      # app has no lint script.
+
+workflows:
+  starter:
+    jobs:
+      - formik
+      - formik-native
+      - app
