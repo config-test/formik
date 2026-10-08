@@ -1,0 +1,175 @@
+version: 2.1
+
+# Mirrors .github/workflows/ci.yml (source of truth) for the formik yarn-workspaces monorepo.
+# Node version comes from .nvmrc (v18); package manager is yarn 1.22.22 (packageManager field + yarn.lock).
+#
+# Not translated 1:1 from GitHub Actions -- see the summary / README notes:
+#   - tj-actions/changed-files (the `detectChangedSourceFiles` gate)
+#   - benchmark-action/github-action-benchmark (perf regression alerting + PR comment)
+#   - preactjs/compressed-size-action (bundle size diff + PR comment)
+#   - changesets/action in .github/workflows/release.yml (publishing is intentionally not mirrored)
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:18.20.4
+    working_directory: ~/formik
+
+commands:
+  install_deps:
+    description: Checkout, restore the yarn cache, and install workspace dependencies.
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - yarn-v1-{{ checksum "yarn.lock" }}
+            - yarn-v1-
+      - run:
+          name: Print toolchain versions
+          command: |
+            node --version
+            npm --version
+            yarn --version
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+      - save_cache:
+          key: yarn-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+
+jobs:
+  # Mirrors the `unit` job, split per workspace package so they run in parallel.
+  unit-formik:
+    executor: node
+    resource_class: large
+    environment:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - install_deps
+      - run:
+          name: Test packages/formik
+          command: yarn turbo run test --filter=formik -- --coverage
+      - store_artifacts:
+          path: packages/formik/coverage
+          destination: coverage-formik
+
+  unit-formik-native:
+    executor: node
+    resource_class: large
+    environment:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - install_deps
+      - run:
+          name: Test packages/formik-native
+          command: yarn turbo run test --filter=formik-native -- --coverage
+      - store_artifacts:
+          path: packages/formik-native/coverage
+          destination: coverage-formik-native
+
+  # NOTE: there is no `lint` job in .github/workflows/ci.yml. This runs the `lint`
+  # script that both packages already define (tsdx lint) via the turbo `lint` task.
+  # Delete this job and its workflow entry if you want strict parity with GitHub Actions.
+  lint:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Lint packages
+          command: yarn turbo run lint --filter='./packages/*'
+
+  # Mirrors the `benchmark` job. The github-action-benchmark step (threshold alerting
+  # and PR comments) has no CircleCI equivalent; output.txt is stored as an artifact instead.
+  benchmark:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build formik for benchmarking
+          command: yarn build:benchmark
+      - restore_cache:
+          keys:
+            - benchmark-v1-
+      - run:
+          name: Run benchmark
+          command: yarn benchmark
+      - run:
+          name: Persist benchmark data
+          command: |
+            mkdir -p ./benchmark-cache
+            cp output.txt ./benchmark-cache/output.txt
+      - save_cache:
+          # CircleCI cache keys are immutable, so append the build number and restore by prefix.
+          key: benchmark-v1-{{ .Environment.CIRCLE_BUILD_NUM }}
+          paths:
+            - ./benchmark-cache
+      - store_artifacts:
+          path: output.txt
+          destination: benchmark/output.txt
+
+  # Mirrors the `size` job's build-script. compressed-size-action's size-diff comment
+  # against the base branch has no CircleCI equivalent; built bundles are stored instead.
+  size:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build packages
+          command: yarn turbo run build --filter='{./packages/*}...'
+      - run:
+          name: Report gzipped bundle sizes
+          command: |
+            find packages/*/dist -type f \( -name '*.js' -o -name '*.mjs' \) -print0 \
+              | xargs -0 -I{} sh -c 'printf "%s\t%s bytes gzipped\n" "{}" "$(gzip -c "{}" | wc -c | tr -d " ")"' \
+              | tee bundle-sizes.txt
+      - store_artifacts:
+          path: bundle-sizes.txt
+          destination: size/bundle-sizes.txt
+      - store_artifacts:
+          path: packages/formik/dist
+          destination: dist/formik
+      - store_artifacts:
+          path: packages/formik-native/dist
+          destination: dist/formik-native
+
+  # Mirrors the `interaction` job (Playwright e2e against the app/ dev server).
+  interaction:
+    executor: node
+    resource_class: large
+    environment:
+      CI: 'true'
+    steps:
+      - install_deps
+      - restore_cache:
+          # GitHub Actions keys this on the @playwright/test version read from a
+          # package-lock.json that does not exist in this repo; yarn.lock is the real source.
+          keys:
+            - playwright-v1-{{ checksum "yarn.lock" }}
+      - run:
+          name: Install Playwright browsers
+          command: yarn playwright install --with-deps
+      - save_cache:
+          key: playwright-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/ms-playwright
+      - run:
+          name: Run Playwright tests
+          command: yarn playwright test
+      - store_artifacts:
+          path: playwright-report
+          destination: playwright-report
+
+workflows:
+  ci:
+    # GitHub Actions triggers on `pull_request` and pushes to main; CircleCI builds every
+    # pushed branch, which is a superset of both.
+    jobs:
+      - unit-formik
+      - unit-formik-native
+      - lint
+      - benchmark
+      - size
+      - interaction
