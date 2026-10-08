@@ -1,0 +1,45 @@
+version: 2.1
+
+jobs:
+  build-test-lint:
+    docker:
+      - image: cimg/node:18.20
+    environment:
+      CI: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore Yarn cache
+          keys:
+            - v1-deps-{{ checksum "yarn.lock" }}
+
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+
+      - save_cache:
+          name: Save Yarn cache
+          key: v1-deps-{{ checksum "yarn.lock" }}
+          paths:
+            - node_modules
+            - ~/.cache/yarn
+
+      - run:
+          name: Build
+          command: yarn build:codesandbox
+
+      - run:
+          name: Test
+          command: yarn test
+
+      - run:
+          name: Lint
+          # No root "lint" script; packages expose "lint" via turbo (same filter as test)
+          command: yarn turbo run lint --filter='./packages/*'
+
+workflows:
+  main:
+    jobs:
+      - build-test-lint
