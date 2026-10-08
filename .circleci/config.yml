@@ -1,0 +1,68 @@
+version: 2.1
+
+# Yarn 1 workspace monorepo driven by turborepo.
+# Dependencies are hoisted to the repo root, so every job installs from the
+# root lockfile and then uses `turbo --filter` to scope build/test/lint to one
+# package.
+
+executors:
+  node:
+    docker:
+      # .nvmrc pins Node 18, which is what the existing CI uses.
+      - image: cimg/node:18.20
+    working_directory: ~/formik
+    environment:
+      CI: 'true'
+      # Matches the existing CI, trimmed to fit the 4GB `medium` container.
+      NODE_OPTIONS: --max-old-space-size=3072
+
+commands:
+  install_deps:
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - yarn-v1-{{ checksum "yarn.lock" }}
+            - yarn-v1-
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+      - save_cache:
+          key: yarn-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+
+jobs:
+  formik:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build
+          command: yarn turbo run build --filter=formik
+      - run:
+          name: Test
+          command: yarn turbo run test --filter=formik
+      - run:
+          name: Lint
+          command: yarn turbo run lint --filter=formik
+
+  formik-native:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build
+          command: yarn turbo run build --filter=formik-native
+      - run:
+          name: Test
+          command: yarn turbo run test --filter=formik-native
+      - run:
+          name: Lint
+          command: yarn turbo run lint --filter=formik-native
+
+workflows:
+  ci:
+    jobs:
+      - formik
+      - formik-native
