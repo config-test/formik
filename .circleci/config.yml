@@ -1,0 +1,67 @@
+version: 2.1
+
+# Starter CI for the formik monorepo (yarn 1 workspaces + turborepo).
+# Node version comes from .nvmrc (v18), which is what the existing GitHub
+# Actions workflow pins to.
+executors:
+  node:
+    docker:
+      - image: cimg/node:18.20
+    # Tests run with --max-old-space-size=4096, which needs more than the
+    # 4GB a `medium` container gives us.
+    resource_class: large
+    environment:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+
+commands:
+  install_deps:
+    description: Checkout and install root workspace dependencies.
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - yarn-v1-{{ checksum "yarn.lock" }}
+            - yarn-v1-
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+      - save_cache:
+          key: yarn-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+
+jobs:
+  formik:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build
+          command: yarn turbo run build --filter=formik
+      - run:
+          name: Test
+          command: yarn turbo run test --filter=formik
+      - run:
+          name: Lint
+          command: yarn turbo run lint --filter=formik
+
+  formik-native:
+    executor: node
+    steps:
+      - install_deps
+      - run:
+          name: Build
+          command: yarn turbo run build --filter=formik-native
+      - run:
+          name: Test
+          command: yarn turbo run test --filter=formik-native
+      - run:
+          name: Lint
+          command: yarn turbo run lint --filter=formik-native
+
+workflows:
+  ci:
+    jobs:
+      - formik
+      - formik-native
