@@ -1,0 +1,39 @@
+# Formik — Yarn workspaces monorepo (packages/*, website).
+# Node 18 from .nvmrc; install/test match .github/workflows/ci.yml unit job.
+# No root lint script (packages have tsdx lint; CONTRIBUTING's `yarn lint` is stale).
+version: 2.1
+
+jobs:
+  build-and-test:
+    docker:
+      - image: cimg/node:18.20
+    environment:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - checkout
+      - restore_cache:
+          name: Restore Yarn cache
+          keys:
+            - v1-dependencies-{{ checksum "yarn.lock" }}
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+      - save_cache:
+          name: Save Yarn cache
+          key: v1-dependencies-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+            - node_modules
+      - run:
+          name: Build
+          # Packages only — same filter as root test / build:codesandbox (website has no CI unit job)
+          command: yarn build:codesandbox
+      - run:
+          name: Test
+          command: yarn test --coverage
+
+workflows:
+  main:
+    jobs:
+      - build-and-test
